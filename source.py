@@ -67,8 +67,7 @@ class Context(object):
             self._prev_update_time = timestamp
         else:
             time.sleep(0.05)
-
-
+    
 class PD(object):
     _kp = 0.0 
     _kd = 0.0 
@@ -124,13 +123,16 @@ def keep_yaw(yaw_to_set, speed_l=0, speed_r=0):
         keep_yaw.regulator.set_p_gain(0.8) 
         keep_yaw.regulator.set_d_gain(0.5)
 
-
 def find_red_circle(img):
     image_hsv = cv.cvtColor(img, cv.COLOR_BGR2HSV) 
-    hsv_min = (20, 50, 50) 
-    hsv_max = (40, 255, 255) 
+    hsv_min = (0, 50, 50) 
+    hsv_max = (10, 255, 255) 
+    hsv_min1 = (170, 50, 50) 
+    hsv_max1 = (180, 255, 255) 
     image_bin = cv.inRange(image_hsv, hsv_min, hsv_max)
-    cnt, _ = cv.findContours(image_bin, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_NONE)
+    image_bin1 = cv.inRange(image_hsv, hsv_min1, hsv_max1)
+    image_mask = image_bin + image_bin1
+    cnt, _ = cv.findContours(image_mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_NONE)
     print(len(cnt))
     for c in cnt:
         area = cv.contourArea(c)
@@ -186,3 +188,17 @@ def stab_on_red_circle(image):
             stab_on_red_circle.regulator_side.set_p_gain(0.8) 
             stab_on_red_circle.regulator_side. set_d_gain(0.5)
             print("Om")
+
+depth_value = 0
+while True:
+    image = auv.get_image_front()
+    if stab_on_red_circle(image):
+        depth_value = auv.get_depth()
+        auv.set_motor_power(2, 0) 
+        auv.set_motor_power(3, 0)
+        break
+    auv.set_motor_power(2, -50) 
+    auv.set_motor_power(3, -50)
+    time.sleep(0.05)
+print("qq")
+keep_depth(depth_value)
