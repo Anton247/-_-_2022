@@ -6,19 +6,99 @@ import pymurapi as mur
 
 auv = mur.mur_init()
 
-def shape_recognition(img, color):
+#класс для хранения атрибутов аппарата
+class Context(object):
+    _yaw = 0.0 # текущий курс
+    _depth = 0.0 # текущая глубина
+    _speed_forward_left = 0.0 # текущая скорость вперёд-назад левого движителя
+    _speed_forward_right = 0.0 # текущая скорость вперёд-назад правого движителя
+    _speed_up = 0.0 # текущая скорость вверх-вниз
+    _prev_update_time = 0 # контроль частоты вызова "воздействий"
+    _missions = [] # последовательность действий
+
+    def set_yaw(self, value):
+        self._yaw = value
+    def set_depth(self, value):
+        self._depth = value
+    def set_speed_forward(self, value_l, value_r):
+        self._speed_forward_left = value_l
+        self._speed_forward_right = value_r
+    def set_speed_forward(self, value):
+        self._speed_forward_left = value
+        self._speed_forward_right = value
+    def set_speed_forward_left(self, value):
+        self._speed_forward_left = value
+    def set_speed_forward_right(self, value):
+        self._speed_forward_right = value
+    def set_speed_up(self, value):
+        self._speed_up = value
+
+    def get_yaw(self):
+        return self._yaw
+    def get_depth(self):
+        return self._depth
+    def get_speed_forward(self):
+        return (self._speed_forward_left, self._speed_forward_right)
+    def get_speed_forward_left(self):
+        return self._speed_forward_left
+    def get_speed_forward_right(self):
+        return self._speed_forward_right
+    def get_speed_up(self):
+        return self._speed_up
+    def stop_motors(self):
+        auv.set_motor_power(0, 0)
+        auv.set_motor_power(1, 0)
+        auv.set_motor_power(2, 0)
+        auv.set_motor_power(3, 0)
+        self.set_speed_forward = 0
+        self.set_speed_up = 0
+    def add_mission(self, func):
+        self._missions.append(func)
+    def pop_mission(self):
+        return self._missions.pop(0)
+    
+    def get_missions_length(self):
+        return len(self._missions)
+
+    def update(self):
+        timestamp = int(round(time.time() * 1000))
+        if abs(timestamp - self._prev_update_time) > 16:
+            #print(self._depth, self._speed_up)
+            keep_depth(self._depth, self._speed_up)
+            keep_yaw(self._yaw, self._speed_forward_left, self._speed_forward_right)
+            self._prev_update_time = timestamp
+        else:
+            time.sleep(0.05)
+
+cnt = Context()
+
+def shape_recognition(img, color): # распознавание фигур
+    #color - СПИСОК!!!
     '''color = (
         ( 56, 192,  90),
         ( 74, 255, 255),
     )'''
     def find_contours(img, color):
         img_hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-        img_mask = cv2.inRange(img_hsv, color[0], color[1])
+        mask = []
+        #i = 0
+        for hue in color:
+            mask.append(cv2.inRange(img_hsv, hue[0], hue[1]))
+            #cv2.imwrite(f'm{i}.jpg', mask[i])
+            #i+=1
+        #print(mask[0].shape)
+        img_mask = np.zeros(mask[0].shape, np.float64)
+        for m in mask:
+            img_mask += m
+        img_mask = np.clip(img_mask , 0, 255)
+        img_mask = img_mask.astype(np.uint8)
+        #cv2.imwrite('img.jpg', img_mask)
         contours, _ = cv2.findContours(img_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         return contours
 
     contours = find_contours(img, color)
+    #print('len', len(contours))
     if contours:
         for cnt in contours:
             area = cv2.contourArea(cnt)
@@ -64,9 +144,10 @@ def shape_recognition(img, color):
                 y = int(moments['m01'] / moments['m00'])
                 return shape_name, x, y
             except ZeroDivisionError:
-                return shape_name, -1, -1
-        else:
-            return False, -1, -1
+                return shape_name, 0, 0
+    
+    
+    return False, 0, 0
 
 def clamp(value, min_value, max_value):
     if value > max_value: 
@@ -79,7 +160,7 @@ class PD(object):
     _kp = 0.0 #коэффициент пропорциональности 
     _kd = 0.0 #дифференциальный пропорциональности
     _prev_error = 0.0 # предыдущая ошибка
-    _timestamp = 0 # время
+    _timestamp = 0 # предыдущее время
     
     def __init__(self):
         pass
@@ -90,25 +171,33 @@ class PD(object):
     #расчёт регулирующего воздействия
     def process(self, error):
         timestamp = int(round(time.time() * 1000))
-        output = self._kp * error + self._kd / (timestamp - self._timestamp) * (error - self._prev_error)
-        self._timestamp = timestamp 
-        self._prev_error = error 
-        return output
+        try:
+            output = self._kp * error + self._kd / (timestamp - self._timestamp) * (error - self._prev_error)
+            self._timestamp = timestamp 
+            self._prev_error = error 
+            return output
+        except:
+            time.sleep(0.1)
+            timestamp = int(round(time.time() * 1000))
+            output = self._kp * error + self._kd / (timestamp - self._timestamp) * (error - self._prev_error)
+            self._timestamp = timestamp 
+            self._prev_error = error 
+            return output
  
-def keep_depth(depth_to_set):
+def keep_depth(depth_to_set, speed_up):
     try:
         error = auv.get_depth() - depth_to_set 
         output = keep_depth.regulator.process(error) 
         output = clamp(output, -100, 100) 
-        auv.set_motor_power(2, output) 
-        auv.set_motor_power(3, output)
+        auv.set_motor_power(2, output + speed_up) 
+        auv.set_motor_power(3, output + speed_up)
     except AttributeError:
         keep_depth.regulator = PD() 
         keep_depth.regulator.set_p_gain(70) 
-        keep_depth.regulator. set_d_gain(5)
+        keep_depth.regulator.set_d_gain(5)
 
 # Функция удержания курса
-def keep_yaw(yaw_to_set):
+def keep_yaw(yaw_to_set, speed_left, speed_right):
     def clamp_to_180(angle):
         if angle > 180.0:
             return angle - 360.0
@@ -119,11 +208,128 @@ def keep_yaw(yaw_to_set):
         error = auv.get_yaw() - yaw_to_set 
         error = clamp_to_180(error) 
         output = keep_yaw.regulator.process(error) 
-        output = clamp(output, -100, 100) 
-        auv. set_motor_power(0, -output) 
-        auv. set_motor_power(1, output)
+        output = clamp(output, -100, 100)
+        output0 = clamp(-output + speed_left, -100, 100)
+        output1 = clamp(output + speed_right, -100, 100)
+        auv.set_motor_power(0, output0) 
+        auv.set_motor_power(1, output1)
     except AttributeError:
         keep_yaw.regulator = PD() 
         keep_yaw.regulator. set_p_gain(0.8) 
         keep_yaw.regulator.set_d_gain(0.5)
                    
+def find_on_shape(image, shape, color):
+    found, x, y = shape_recognition(image, color)
+    print(found, x, y)
+    if found:
+        h, w, c = image.shape
+        x_center = x - (w / 2)
+        y_center = y - (h / 2)
+
+        try:
+            length = math.sqrt(x_center**2 + y_center**2)
+            #print(length)
+            if length < 3: #условие выхода из поиска
+                cnt.set_speed_up(0)
+                cnt.set_speed_forward(0, 0)
+                cnt.set_depth(auv.get_depth())
+                return True
+            output_depth = find_on_red_circle.regulator_depth.process(y_center)
+            output_side = find_on_red_circle.regulator_side.process(x_center) 
+            output_depth = clamp(output_depth, -50, 50)
+            output_side = clamp(output_side, -50, 50) 
+            #print(output_side)
+            cnt.set_speed_up(-output_depth)
+            cnt.set_speed_forward_left(output_side)
+            cnt.set_speed_forward_right(-output_side)
+            #auv.set_motor_power(2, -output_depth) 
+            #auv.set_motor_power(3, -output_depth)
+
+            #auv.set_motor_power(0, output_side) 
+            #auv.set_motor_power(1, -output_side)
+            
+        except AttributeError:
+            find_on_red_circle.regulator_depth = PD() 
+            find_on_red_circle.regulator_depth.set_p_gain(0.1) 
+            find_on_red_circle.regulator_depth.set_d_gain(0.1)
+
+            find_on_red_circle.regulator_side = PD() 
+            find_on_red_circle.regulator_side.set_p_gain(0.1) 
+            find_on_red_circle.regulator_side.set_d_gain(0.1)
+
+    else: #если перед роботом нет красного круга, опускаемся вниз
+        #auv.set_motor_power(2, -10) 
+        #auv.set_motor_power(3, -10)
+        cnt.set_speed_up(-10)
+        cnt.set_depth(auv.get_depth())
+        #keep_yaw(yaw, 0, 0)
+    return False
+
+def stab_on_shape()
+
+def move_to_red_circle():
+    image = auv.get_image_front()
+    found = find_on_red_circle(image, cnt.get_yaw())
+    print(found)
+    return found
+
+def stab_on_circle():
+    image = auv.get_image_front()
+    stabed = find_on_red_circle(image)
+
+    if stabed:
+        cnt.stop_motors()
+        return True
+    else:
+        return False
+
+
+# MAIN БЛОК
+color_red = [
+        ((0, 50, 50), 
+        (15, 250, 250)),
+        ((170, 50, 50),
+        (180, 250, 250)) 
+    ]
+time.sleep(0.05)
+cnt.set_yaw(auv.get_yaw())
+cnt.set_depth(auv.get_depth())
+cnt.set_speed_up(-30) # скорость вниз
+cnt.add_mission(move_to_red_circle) # добавляем "задачу"
+cnt.add_mission(stab_on_circle)
+while True:
+    mission = cnt.pop_mission()
+    while not mission():
+        print('update')
+        cnt.update()
+    if cnt.get_missions_length() == 0:
+        break
+print('end')
+'''
+yaw_required = auv.get_yaw()
+depth_required = 0
+print(yaw_required)
+while True:
+    image = auv.get_image_front()
+    if stab_on_red_circle(image, yaw_required):
+        depth_required = auv.get_depth()
+        yaw_required = auv.get_yaw()
+        print('Stop stab')
+        break
+    time.sleep(0.05)
+
+print(depth_required, yaw_required)
+
+timestamp_s = int(round(time.time() ))
+while True:
+    keep_depth(depth_required)
+    keep_yaw(yaw_required)
+    time.sleep(0.05)
+    timestamp_e = int(round(time.time()))
+    if abs(timestamp_e - timestamp_s) > 5:
+        break
+
+yaw_required += 90 #так не правильно, но это ради теста
+while True:
+    keep_yaw(yaw_required)
+    '''
