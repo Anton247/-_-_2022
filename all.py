@@ -70,84 +70,7 @@ class Context(object):
         else:
             time.sleep(0.05)
 
-cnt = Context()
-
-def shape_recognition(img, color): # распознавание фигур
-    #color - СПИСОК!!!
-    '''color = (
-        ( 56, 192,  90),
-        ( 74, 255, 255),
-    )'''
-    def find_contours(img, color):
-        img_hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-        mask = []
-        #i = 0
-        for hue in color:
-            mask.append(cv2.inRange(img_hsv, hue[0], hue[1]))
-            #cv2.imwrite(f'm{i}.jpg', mask[i])
-            #i+=1
-        #print(mask[0].shape)
-        img_mask = np.zeros(mask[0].shape, np.float64)
-        for m in mask:
-            img_mask += m
-        img_mask = np.clip(img_mask , 0, 255)
-        img_mask = img_mask.astype(np.uint8)
-        #cv2.imwrite('img.jpg', img_mask)
-        contours, _ = cv2.findContours(img_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-        return contours
-
-    contours = find_contours(img, color)
-    #print('len', len(contours))
-    if contours:
-        for cnt in contours:
-            area = cv2.contourArea(cnt)
-            if area < 500:
-                continue
-            # Описанная окружность.
-            (circle_x, circle_y), circle_radius = cv2.minEnclosingCircle(cnt)
-            circle_area = circle_radius ** 2 * math.pi
-            # Описанный прямоугольник (с вращением)
-            rectangle = cv2.minAreaRect(cnt)
-            # Получим контур описанного прямоугольника
-            box = cv2.boxPoints(rectangle)
-            box = np.int0(box)
-            # Вычислим площадь и соотношение сторон прямоугольника.
-            rectangle_area = cv2.contourArea(box)
-            rect_w, rect_h = rectangle[1][0], rectangle[1][1]
-            aspect_ratio = max(rect_w, rect_h) / min(rect_w, rect_h)
-            # Описанный треугольник
-            try:
-                triangle = cv2.minEnclosingTriangle(cnt)[1]
-                triangle = np.int0(triangle)
-                triangle_area = cv2.contourArea(triangle)
-            except:
-                triangle_area = 0
-            # Заполним словарь, который будет содержать площади каждой из описанных фигур
-            shapes_areas = {
-                'circle': circle_area,
-                'rectangle' if aspect_ratio > 1.25 else 'square': rectangle_area,
-                'triangle': triangle_area,
-            }
-
-            # Теперь заполним аналогичный словарь, который будет содержать
-            # разницу между площадью контора и площадью каждой из фигур.
-            diffs = {
-                name: abs(area - shapes_areas[name]) for name in shapes_areas
-            }
-            # Получаем имя фигуры с наименьшей разницой площади.
-            shape_name = min(diffs, key=diffs.get) 
-            # вычислим центр
-            moments = cv2.moments(cnt)
-            try:
-                x = int(moments['m10'] / moments['m00'])
-                y = int(moments['m01'] / moments['m00'])
-                return shape_name, x, y
-            except ZeroDivisionError:
-                return shape_name, 0, 0
-    
-    
-    return False, 0, 0
+cnt = Context() # хранение атрибутов аппарата
 
 def clamp(value, min_value, max_value):
     if value > max_value: 
@@ -184,6 +107,7 @@ class PD(object):
             self._prev_error = error 
             return output
  
+# поддержание глубины
 def keep_depth(depth_to_set, speed_up):
     try:
         error = auv.get_depth() - depth_to_set 
@@ -217,15 +141,114 @@ def keep_yaw(yaw_to_set, speed_left, speed_right):
         keep_yaw.regulator = PD() 
         keep_yaw.regulator. set_p_gain(0.8) 
         keep_yaw.regulator.set_d_gain(0.5)
-                   
-def find_on_shape(image, shape, color):
-    found, x, y = shape_recognition(image, color)
-    print(found, x, y)
+
+def shape_recognition(img, color): # распознавание фигур
+    #color - СПИСОК!!!
+    def find_contours(img, color):
+        img_hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        mask = []
+        #i = 0
+        for hue in color:
+            mask.append(cv2.inRange(img_hsv, hue[0], hue[1]))
+            #cv2.imwrite(f'm{i}.jpg', mask[i])
+            #i+=1
+        #print(mask[0].shape)
+        img_mask = np.zeros(mask[0].shape, np.float64)
+        for m in mask:
+            img_mask += m
+        img_mask = np.clip(img_mask , 0, 255)
+        img_mask = img_mask.astype(np.uint8)
+        #cv2.imwrite('img.jpg', img_mask)
+        contours, _ = cv2.findContours(img_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        return contours
+
+    contours = find_contours(img, color)
+    #print('len', len(contours))
+    figures = []
+    if contours:
+        for cnt in contours:
+            area = abs(cv2.contourArea(cnt))
+            if area > 500:
+                # Описанная окружность.
+                (circle_x, circle_y), circle_radius = cv2.minEnclosingCircle(cnt)
+                circle_area = circle_radius ** 2 * math.pi
+                # Описанный прямоугольник (с вращением)
+                rectangle = cv2.minAreaRect(cnt)
+                # Получим контур описанного прямоугольника
+                box = cv2.boxPoints(rectangle)
+                box = np.int0(box)
+                # Вычислим площадь и соотношение сторон прямоугольника.
+                rectangle_area = cv2.contourArea(box)
+                rect_w, rect_h = rectangle[1][0], rectangle[1][1]
+                aspect_ratio = max(rect_w, rect_h) / min(rect_w, rect_h)
+                # Описанный треугольник
+                try:
+                    triangle = cv2.minEnclosingTriangle(cnt)[1]
+                    triangle = np.int0(triangle)
+                    triangle_area = cv2.contourArea(triangle)
+                except:
+                    triangle_area = 0
+                # Заполним словарь, который будет содержать площади каждой из описанных фигур
+                shapes_areas = {
+                    'circle': circle_area,
+                    'rectangle' if aspect_ratio > 1.25 else 'square': rectangle_area,
+                    'triangle': triangle_area,
+                }
+                # Теперь заполним аналогичный словарь, который будет содержать
+                # разницу между площадью контура и площадью каждой из фигур.
+                diffs = {
+                    name: abs(area - shapes_areas[name]) for name in shapes_areas
+                }
+                # Получаем имя фигуры с наименьшей разницой площади.
+                shape_name = min(diffs, key=diffs.get) 
+                
+                figures.append(shape_name, cnt)
+    # Список фигур - название, контур
+    return figures
+
+def shape_center(cnt):
+    moments = cv2.moments(cnt)
+    try:
+        x = int(moments['m10'] / moments['m00'])
+        y = int(moments['m01'] / moments['m00'])
+        return (x, y)
+    except ZeroDivisionError:
+        return (0, 0)
+
+def find_shape(image, shape, color):
+    # поиск нужной фигуры, возвращаем список из интересуюющих фигур
+    figures = shape_recognition(image, color)
+    necessary_figure = []
+    for f in figures:
+        if f[0] == shape:
+            necessary_figure.append(f)
+    return necessary_figure
+
+def find_circle(image, color):
+    # ищем самый большой круг нужного цвета
+    image_hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    shape = find_shape(image_hsv, color, 'circle')
+    shape_max = []
+    if shape:
+        max_area = cv2.contourArea(shape[0][1])
+        shape_max.append(shape[0])
+        for s in shape:
+            area = cv2.contourArea(s[1])
+            if area > max_area:
+                max_area = area
+                shape_max.clear()
+                shape_max.append(s)
+    return shape_max
+
+def stab_on_circle(image, color):
+    found = find_circle(image, color)
     if found:
+        x = found[0][1]
+        y = found[1][1]
         h, w, c = image.shape
         x_center = x - (w / 2)
         y_center = y - (h / 2)
-
         try:
             length = math.sqrt(x_center**2 + y_center**2)
             #print(length)
@@ -234,8 +257,8 @@ def find_on_shape(image, shape, color):
                 cnt.set_speed_forward(0, 0)
                 cnt.set_depth(auv.get_depth())
                 return True
-            output_depth = find_on_red_circle.regulator_depth.process(y_center)
-            output_side = find_on_red_circle.regulator_side.process(x_center) 
+            output_depth = stab_on_circle.regulator_depth.process(y_center)
+            output_side = stab_on_circle.regulator_side.process(x_center) 
             output_depth = clamp(output_depth, -50, 50)
             output_side = clamp(output_side, -50, 50) 
             #print(output_side)
@@ -249,13 +272,13 @@ def find_on_shape(image, shape, color):
             #auv.set_motor_power(1, -output_side)
             
         except AttributeError:
-            find_on_red_circle.regulator_depth = PD() 
-            find_on_red_circle.regulator_depth.set_p_gain(0.1) 
-            find_on_red_circle.regulator_depth.set_d_gain(0.1)
+            stab_on_circle.regulator_depth = PD() 
+            stab_on_circle.regulator_depth.set_p_gain(0.1) 
+            stab_on_circle.regulator_depth.set_d_gain(0.1)
 
-            find_on_red_circle.regulator_side = PD() 
-            find_on_red_circle.regulator_side.set_p_gain(0.1) 
-            find_on_red_circle.regulator_side.set_d_gain(0.1)
+            stab_on_circle.regulator_side = PD() 
+            stab_on_circle.regulator_side.set_p_gain(0.1) 
+            stab_on_circle.regulator_side.set_d_gain(0.1)
 
     else: #если перед роботом нет красного круга, опускаемся вниз
         #auv.set_motor_power(2, -10) 
@@ -265,24 +288,11 @@ def find_on_shape(image, shape, color):
         #keep_yaw(yaw, 0, 0)
     return False
 
-def stab_on_shape()
-
 def move_to_red_circle():
     image = auv.get_image_front()
     found = find_on_red_circle(image, cnt.get_yaw())
     print(found)
     return found
-
-def stab_on_circle():
-    image = auv.get_image_front()
-    stabed = find_on_red_circle(image)
-
-    if stabed:
-        cnt.stop_motors()
-        return True
-    else:
-        return False
-
 
 # MAIN БЛОК
 color_red = [
